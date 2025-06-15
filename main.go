@@ -3,6 +3,7 @@ package main
 import (
 	"blogo/internal/config"
 	"blogo/internal/database"
+	"blogo/internal/rss"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -77,8 +78,13 @@ func handlerReset(s *state, _ command) error {
 	if err := database.DropUserTable(s.db); err != nil {
 		return err
 	}
-
+	if err := database.DropFeedsTable(s.db); err != nil {
+		return err
+	}
 	if err := database.CreateUserTable(s.db); err != nil {
+		return err
+	}
+	if err := database.CreateFeedsTable(s.db); err != nil {
 		return err
 	}
 	fmt.Println("Database has been reset to blank state.")
@@ -100,6 +106,61 @@ func handlerUsers(s *state, _ command) error {
 	return nil
 }
 
+func handlerAgg(s *state, _ command) error {
+	feed, err := rss.FetchFeed("https://www.wagslane.dev/index.xml")
+	if err != nil {
+		return err
+	}
+	fmt.Println("Title:", feed.Channel.Title)
+	fmt.Println("Link :", feed.Channel.Link)
+	fmt.Println("Desc :", feed.Channel.Description)
+	fmt.Printf("Items: %d\n", len(feed.Channel.Items))
+	for i, item := range feed.Channel.Items {
+		fmt.Printf("--------Item %d---------\n", i)
+		fmt.Println("Title: ", item.Title)
+		fmt.Println("Description: ", item.Description)
+		fmt.Println("Link: ", item.Link)
+		fmt.Println("PubDate: ", item.PubDate)
+	}
+	return nil
+}
+
+func handlerAddFeed(s *state, cmd command) error {
+	if len(cmd.args) != 2 {
+		return fmt.Errorf("%s: usage: addfeed <name> <url>", cmd.name)
+	}
+	name, url := cmd.args[0], cmd.args[1]
+
+	uid, err := database.GetUserID(s.db, s.cfg.CurrentUser)
+	if err != nil {
+		return fmt.Errorf("addfeed: %w", err)
+	}
+
+	if err := database.CreateFeed(s.db, name, url, uid); err != nil {
+		return err
+	}
+	fmt.Printf("Feed added : %s → %s\n", name, url)
+	return nil
+}
+
+func handlerFeeds(s *state, _ command) error {
+	feeds, err := database.GetFeeds(s.db)
+	if err != nil {
+		return err
+	}
+
+	if len(feeds) == 0 {
+		fmt.Println("No feeds found.")
+		return nil
+	}
+
+	for _, f := range feeds {
+		// e.g.: The Changelog → https://changelog.com/feed (added by alice)
+		fmt.Printf("%s → %s (added by %s)\n", f.Name, f.URL, f.Username)
+	}
+	return nil
+}
+
 func main() {
 	cfg, err := config.Read()
 	if err != nil {
@@ -115,6 +176,7 @@ func main() {
 	defer db.Close()
 
 	database.CreateUserTable(db)
+	database.CreateFeedsTable(db)
 
 	s := state{cfg: cfg, db: db}
 	c := commands{list: make(commandMap)}
@@ -122,7 +184,9 @@ func main() {
 	c.register("register", handlerRegister)
 	c.register("reset", handlerReset)
 	c.register("users", handlerUsers)
-
+	c.register("agg", handlerAgg)
+	c.register("addfeed", handlerAddFeed)
+	c.register("feeds", handlerFeeds)
 	args := os.Args[1:]
 	if len(args) < 1 {
 		fmt.Println("Usage: blogo <some-arg>")
