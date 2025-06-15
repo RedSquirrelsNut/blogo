@@ -6,7 +6,7 @@ import (
 )
 
 func CreateUserTable(db *sql.DB) error {
-	_, err := db.Exec(`
+	if _, err := db.Exec(`
         CREATE TABLE IF NOT EXISTS users (
             id   			 INTEGER PRIMARY KEY,
     				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -23,8 +23,7 @@ func CreateUserTable(db *sql.DB) error {
     			SET    updated_at = CURRENT_TIMESTAMP
     			WHERE  id = OLD.id;
   			END;
-    `)
-	if err != nil {
+    `); err != nil {
 		return err
 	}
 	return nil
@@ -77,11 +76,10 @@ func RegisterUser(db *sql.DB, username string) error {
 		return err
 	}
 	if !userFound {
-		_, err := db.Exec(
+		if _, err := db.Exec(
 			`INSERT INTO users (name) VALUES (?);`,
 			username,
-		)
-		if err != nil {
+		); err != nil {
 			return fmt.Errorf("failed to register %q: %w", username, err)
 		}
 	} else {
