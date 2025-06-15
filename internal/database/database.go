@@ -6,7 +6,6 @@ import (
 )
 
 func CreateUserTable(db *sql.DB) error {
-	// Create a table
 	_, err := db.Exec(`
         CREATE TABLE IF NOT EXISTS users (
             id   			 INTEGER PRIMARY KEY,
@@ -32,7 +31,6 @@ func CreateUserTable(db *sql.DB) error {
 }
 
 func DropUserTable(db *sql.DB) error {
-	// 1) Drop the table & trigger if they exist
 	if _, err := db.Exec(`
     DROP TRIGGER IF EXISTS users_updated_at;
     DROP TABLE   IF EXISTS users;
@@ -79,7 +77,6 @@ func RegisterUser(db *sql.DB, username string) error {
 		return err
 	}
 	if !userFound {
-		// Insert the new user
 		_, err := db.Exec(
 			`INSERT INTO users (name) VALUES (?);`,
 			username,
