@@ -81,12 +81,19 @@ func handlerReset(s *state, _ command) error {
 	if err := database.DropFeedsTable(s.db); err != nil {
 		return err
 	}
+	if err := database.DropFeedFollows(s.db); err != nil {
+		return err
+	}
 	if err := database.CreateUserTable(s.db); err != nil {
 		return err
 	}
 	if err := database.CreateFeedsTable(s.db); err != nil {
 		return err
 	}
+	if err := database.CreateFeedFollowsTable(s.db); err != nil {
+		return err
+	}
+
 	fmt.Println("Database has been reset to blank state.")
 	return nil
 }
@@ -155,7 +162,6 @@ func handlerFeeds(s *state, _ command) error {
 	}
 
 	for _, f := range feeds {
-		// e.g.: The Changelog → https://changelog.com/feed (added by alice)
 		fmt.Printf("%s → %s (added by %s)\n", f.Name, f.URL, f.Username)
 	}
 	return nil
@@ -175,8 +181,15 @@ func main() {
 	}
 	defer db.Close()
 
-	database.CreateUserTable(db)
-	database.CreateFeedsTable(db)
+	if err := database.CreateUserTable(s.db); err != nil {
+		return err
+	}
+	if err := database.CreateFeedsTable(s.db); err != nil {
+		return err
+	}
+	if err := database.CreateFeedFollowsTable(s.db); err != nil {
+		return err
+	}
 
 	s := state{cfg: cfg, db: db}
 	c := commands{list: make(commandMap)}

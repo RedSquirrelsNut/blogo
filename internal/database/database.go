@@ -1,9 +1,84 @@
 package database
 
 import (
+	"blogo/internal/database/schema"
 	"database/sql"
 	"fmt"
+	"time"
 )
+
+type FeedFollowInfo struct {
+	ID        int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	UserID    int64
+	FeedID    int64
+	UserName  string
+	FeedName  string
+	FeedURL   string
+}
+
+const createFeedFollowSQL = `
+WITH ins AS (
+  INSERT INTO feed_follows (user_id, feed_id)
+  VALUES (?, ?)
+  RETURNING id, created_at, updated_at, user_id, feed_id
+)
+SELECT
+  ins.id,
+  ins.created_at,
+  ins.updated_at,
+  ins.user_id,
+  ins.feed_id,
+  u.name   AS user_name,
+  f.name   AS feed_name,
+  f.url    AS feed_url
+FROM ins
+JOIN users AS u ON u.id = ins.user_id
+JOIN feeds AS f ON f.id = ins.feed_id;
+`
+
+// CreateFeedFollow inserts a new follow and returns the full record.
+func CreateFeedFollow(db *sql.DB, userID, feedID int64) (*FeedFollowInfo, error) {
+	row := db.QueryRow(createFeedFollowSQL, userID, feedID)
+
+	var ff FeedFollowInfo
+	if err := row.Scan(
+		&ff.ID,
+		&ff.CreatedAt,
+		&ff.UpdatedAt,
+		&ff.UserID,
+		&ff.FeedID,
+		&ff.UserName,
+		&ff.FeedName,
+		&ff.FeedURL,
+	); err != nil {
+		return nil, fmt.Errorf("create feed_follow: %w", err)
+	}
+	return &ff, nil
+}
+
+func CreateFeedFollowsTable(db *sql.DB) error {
+	schema, err := schema.LoadSchema("feed_follows")
+	if err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	return nil
+}
+
+func DropFeedFollows(db *sql.DB) error {
+	if _, err := db.Exec(`
+  	DROP TRIGGER IF EXISTS feed_follows_updated_at;
+		DROP TABLE   IF EXISTS feed_follows;
+  `); err != nil {
+		return fmt.Errorf("reset: failed to drop schema: %w", err)
+	}
+	return nil
+}
 
 type FeedInfo struct {
 	Name     string
@@ -38,26 +113,12 @@ func GetFeeds(db *sql.DB) ([]FeedInfo, error) {
 }
 
 func CreateFeedsTable(db *sql.DB) error {
-	if _, err := db.Exec(`
-				CREATE TABLE IF NOT EXISTS feeds (
-  				id          INTEGER PRIMARY KEY,
-  				created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  				updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  				name        TEXT    NOT NULL,
-  				url         TEXT    NOT NULL UNIQUE,
-  				user_id     INTEGER NOT NULL,
-  				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-				);
+	schema, err := schema.LoadSchema("feeds")
+	if err != nil {
+		return err
+	}
 
-				CREATE TRIGGER IF NOT EXISTS feeds_updated_at
-				AFTER UPDATE ON feeds
-				FOR EACH ROW
-				BEGIN
-  				UPDATE feeds
-    				SET updated_at = CURRENT_TIMESTAMP
-    				WHERE id = OLD.id;
-				END;
-    `); err != nil {
+	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
 	return nil
@@ -75,24 +136,12 @@ func CreateFeed(db *sql.DB, name, url string, userID int64) error {
 }
 
 func CreateUserTable(db *sql.DB) error {
-	if _, err := db.Exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            id   			 INTEGER PRIMARY KEY,
-    				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    				name 			 TEXT NOT NULL
-        );
+	schema, err := schema.LoadSchema("users")
+	if err != nil {
+		return err
+	}
 
-    		-- keep updated_at in sync on every UPDATE
-  			CREATE TRIGGER IF NOT EXISTS users_updated_at
-  			AFTER UPDATE ON users
-  			FOR EACH ROW
-  			BEGIN
-    			UPDATE users
-    			SET    updated_at = CURRENT_TIMESTAMP
-    			WHERE  id = OLD.id;
-  			END;
-    `); err != nil {
+	if _, err := db.Exec(schema); err != nil {
 		return err
 	}
 	return nil

@@ -1,0 +1,17 @@
+CREATE TABLE IF NOT EXISTS users (
+  id   			 INTEGER PRIMARY KEY,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  name 			 TEXT NOT NULL
+);
+
+-- keep updated_at in sync on every UPDATE
+CREATE TRIGGER IF NOT EXISTS users_updated_at
+AFTER UPDATE ON users
+FOR EACH ROW
+BEGIN
+  UPDATE users
+  SET    updated_at = CURRENT_TIMESTAMP
+  WHERE  id = OLD.id;
+END;
+

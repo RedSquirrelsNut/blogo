@@ -1,0 +1,19 @@
+CREATE TABLE IF NOT EXISTS feed_follows (
+  id          INTEGER PRIMARY KEY,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  user_id     INTEGER NOT NULL,
+  feed_id     INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (feed_id) REFERENCES feeds(id) ON DELETE CASCADE,
+  UNIQUE (user_id, feed_id)
+);
+
+CREATE TRIGGER IF NOT EXISTS feed_follows_updated_at
+AFTER UPDATE ON feed_follows
+FOR EACH ROW
+BEGIN
+  UPDATE feed_follows
+    SET updated_at = CURRENT_TIMESTAMP
+    WHERE id = OLD.id;
+END;
