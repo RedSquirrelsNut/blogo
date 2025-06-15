@@ -11,7 +11,7 @@ import (
 var ddlFiles embed.FS
 
 func LoadSchema(name string) (string, error) {
-	b, err := ddlFiles.ReadFile(name)
+	b, err := ddlFiles.ReadFile(name + ".sql")
 	if err != nil {
 		return "", fmt.Errorf("load Schema: %w", err)
 	}

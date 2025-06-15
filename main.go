@@ -143,10 +143,17 @@ func handlerAddFeed(s *state, cmd command) error {
 		return fmt.Errorf("addfeed: %w", err)
 	}
 
-	if err := database.CreateFeed(s.db, name, url, uid); err != nil {
+	id, err := database.CreateFeed(s.db, name, url, uid)
+	if err != nil {
 		return err
 	}
 	fmt.Printf("Feed added : %s → %s\n", name, url)
+
+	ff, err := database.CreateFeedFollow(s.db, uid, id)
+	if err != nil {
+		return fmt.Errorf("addfeed: failed to auto‑follow: %w", err)
+	}
+	fmt.Printf("Auto‑followed: %s (id=%d)\n", ff.FeedName, ff.ID)
 	return nil
 }
 
@@ -167,6 +174,51 @@ func handlerFeeds(s *state, _ command) error {
 	return nil
 }
 
+func handlerFollow(s *state, cmd command) error {
+	if len(cmd.args) != 1 {
+		return fmt.Errorf("%s: usage: follow <feed-url>", cmd.name)
+	}
+	url := cmd.args[0]
+
+	feedID, _, err := database.GetFeedByURL(s.db, url)
+	if err != nil {
+		return err
+	}
+
+	userID, err := database.GetUserID(s.db, s.cfg.CurrentUser)
+	if err != nil {
+		return err
+	}
+
+	ff, err := database.CreateFeedFollow(s.db, userID, feedID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Followed: %s → %s (by %s)\n",
+		ff.FeedName, ff.FeedURL, ff.UserName)
+	return nil
+}
+
+func handlerFollowing(s *state, _ command) error {
+	userID, err := database.GetUserID(s.db, s.cfg.CurrentUser)
+	if err != nil {
+		return err
+	}
+	follows, err := database.GetFeedFollowsForUser(s.db, userID)
+	if err != nil {
+		return err
+	}
+	if len(follows) == 0 {
+		fmt.Println("You are not following any feeds.")
+		return nil
+	}
+	for _, ff := range follows {
+		fmt.Printf("- %s (%s)\n", ff.FeedName, ff.FeedURL)
+	}
+	return nil
+}
+
 func main() {
 	cfg, err := config.Read()
 	if err != nil {
@@ -181,14 +233,14 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := database.CreateUserTable(s.db); err != nil {
-		return err
+	if err := database.CreateUserTable(db); err != nil {
+		log.Fatal(err)
 	}
-	if err := database.CreateFeedsTable(s.db); err != nil {
-		return err
+	if err := database.CreateFeedsTable(db); err != nil {
+		log.Fatal(err)
 	}
-	if err := database.CreateFeedFollowsTable(s.db); err != nil {
-		return err
+	if err := database.CreateFeedFollowsTable(db); err != nil {
+		log.Fatal(err)
 	}
 
 	s := state{cfg: cfg, db: db}
@@ -200,6 +252,8 @@ func main() {
 	c.register("agg", handlerAgg)
 	c.register("addfeed", handlerAddFeed)
 	c.register("feeds", handlerFeeds)
+	c.register("follow", handlerFollow)
+	c.register("following", handlerFollowing)
 	args := os.Args[1:]
 	if len(args) < 1 {
 		fmt.Println("Usage: blogo <some-arg>")

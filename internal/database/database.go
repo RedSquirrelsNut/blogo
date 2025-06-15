@@ -18,44 +18,85 @@ type FeedFollowInfo struct {
 	FeedURL   string
 }
 
-const createFeedFollowSQL = `
-WITH ins AS (
-  INSERT INTO feed_follows (user_id, feed_id)
-  VALUES (?, ?)
-  RETURNING id, created_at, updated_at, user_id, feed_id
-)
-SELECT
-  ins.id,
-  ins.created_at,
-  ins.updated_at,
-  ins.user_id,
-  ins.feed_id,
-  u.name   AS user_name,
-  f.name   AS feed_name,
-  f.url    AS feed_url
-FROM ins
-JOIN users AS u ON u.id = ins.user_id
-JOIN feeds AS f ON f.id = ins.feed_id;
-`
-
-// CreateFeedFollow inserts a new follow and returns the full record.
 func CreateFeedFollow(db *sql.DB, userID, feedID int64) (*FeedFollowInfo, error) {
-	row := db.QueryRow(createFeedFollowSQL, userID, feedID)
+	res, err := db.Exec(
+		`INSERT INTO feed_follows (user_id, feed_id) VALUES (?, ?);`,
+		userID, feedID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create feed_follow: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("create feed_follow: unable to fetch new ID: %w", err)
+	}
+
+	row := db.QueryRow(`
+        SELECT ff.id, ff.created_at, ff.updated_at,
+               ff.user_id, ff.feed_id,
+               u.name AS user_name,
+               f.name AS feed_name, f.url AS feed_url
+        FROM feed_follows AS ff
+        JOIN users AS u ON u.id = ff.user_id
+        JOIN feeds AS f ON f.id = ff.feed_id
+        WHERE ff.id = ?;
+    `, id)
 
 	var ff FeedFollowInfo
 	if err := row.Scan(
-		&ff.ID,
-		&ff.CreatedAt,
-		&ff.UpdatedAt,
-		&ff.UserID,
-		&ff.FeedID,
-		&ff.UserName,
-		&ff.FeedName,
-		&ff.FeedURL,
+		&ff.ID, &ff.CreatedAt, &ff.UpdatedAt,
+		&ff.UserID, &ff.FeedID,
+		&ff.UserName, &ff.FeedName, &ff.FeedURL,
 	); err != nil {
-		return nil, fmt.Errorf("create feed_follow: %w", err)
+		return nil, fmt.Errorf("fetch created feed_follow: %w", err)
 	}
 	return &ff, nil
+}
+
+func GetFeedByURL(db *sql.DB, url string) (id int64, name string, err error) {
+	err = db.QueryRow(
+		`SELECT id, name FROM feeds WHERE url = ?;`,
+		url,
+	).Scan(&id, &name)
+	if err == sql.ErrNoRows {
+		return 0, "", fmt.Errorf("feed %q not found", url)
+	}
+	return id, name, err
+}
+
+func GetFeedFollowsForUser(db *sql.DB, userID int64) ([]FeedFollowInfo, error) {
+	rows, err := db.Query(`
+        SELECT ff.id, ff.created_at, ff.updated_at,
+               ff.user_id, ff.feed_id,
+               u.name AS user_name,
+               f.name AS feed_name, f.url AS feed_url
+        FROM feed_follows AS ff
+        JOIN users AS u ON u.id = ff.user_id
+        JOIN feeds AS f ON f.id = ff.feed_id
+        WHERE ff.user_id = ?
+        ORDER BY ff.id;
+    `, userID)
+	if err != nil {
+		return nil, fmt.Errorf("query feed_follows: %w", err)
+	}
+	defer rows.Close()
+
+	var out []FeedFollowInfo
+	for rows.Next() {
+		var ff FeedFollowInfo
+		if err := rows.Scan(
+			&ff.ID, &ff.CreatedAt, &ff.UpdatedAt,
+			&ff.UserID, &ff.FeedID,
+			&ff.UserName, &ff.FeedName, &ff.FeedURL,
+		); err != nil {
+			return nil, fmt.Errorf("scan feed_follow: %w", err)
+		}
+		out = append(out, ff)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate feed_follows: %w", err)
+	}
+	return out, nil
 }
 
 func CreateFeedFollowsTable(db *sql.DB) error {
@@ -124,15 +165,19 @@ func CreateFeedsTable(db *sql.DB) error {
 	return nil
 }
 
-func CreateFeed(db *sql.DB, name, url string, userID int64) error {
-	_, err := db.Exec(
+func CreateFeed(db *sql.DB, name, url string, userID int64) (int64, error) {
+	res, err := db.Exec(
 		`INSERT INTO feeds (name, url, user_id) VALUES (?, ?, ?);`,
 		name, url, userID,
 	)
 	if err != nil {
-		return fmt.Errorf("create feed %q: %w", name, err)
+		return 0, fmt.Errorf("create feed %q: %w", url, err)
 	}
-	return nil
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("retrieve new feed ID: %w", err)
+	}
+	return id, nil
 }
 
 func CreateUserTable(db *sql.DB) error {
