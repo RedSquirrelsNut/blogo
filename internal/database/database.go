@@ -272,3 +272,50 @@ func RegisterUser(db *sql.DB, username string) error {
 	}
 	return nil
 }
+
+func DropAllTables(db *sql.DB) error {
+	// 1) Disable FK checks so we can drop in any order
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF;`); err != nil {
+		return err
+	}
+
+	// 2) Query all user tables
+	rows, err := db.Query(`
+        SELECT name
+        FROM sqlite_master
+        WHERE type='table'
+          AND name NOT LIKE 'sqlite_%';
+    `)
+	if err != nil {
+		return err
+	}
+
+	// 3) Collect names
+	var tables []string
+	for rows.Next() {
+		var tbl string
+		if err := rows.Scan(&tbl); err != nil {
+			rows.Close()
+			return err
+		}
+		tables = append(tables, tbl)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// 4) Drop each table now that rows is closed
+	for _, tbl := range tables {
+		if _, err := db.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS "%s";`, tbl)); err != nil {
+			return err
+		}
+	}
+
+	// 5) Re‑enable FK checks
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
+		return err
+	}
+
+	return nil
+}

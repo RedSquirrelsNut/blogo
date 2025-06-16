@@ -75,13 +75,7 @@ func handlerRegister(s *state, cmd command) error {
 }
 
 func handlerReset(s *state, _ command) error {
-	if err := database.DropUserTable(s.db); err != nil {
-		return err
-	}
-	if err := database.DropFeedsTable(s.db); err != nil {
-		return err
-	}
-	if err := database.DropFeedFollows(s.db); err != nil {
+	if err := database.DropAllTables(s.db); err != nil {
 		return err
 	}
 	if err := database.CreateUserTable(s.db); err != nil {
