@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -40,6 +41,48 @@ func (c *commands) run(s *state, cmd command) error {
 
 func (c *commands) register(name string, f commandHandler) {
 	c.list[name] = f
+}
+
+func middlewareLoggedIn(handler func(s *state, cmd command, user database.User) error) func(*state, command) error {
+	return func(s *state, cmd command) error {
+		username := s.cfg.CurrentUser
+		if username == "" {
+			fmt.Printf("%s: you must login first (try `login <username>`)\n", cmd.name)
+			return nil
+		}
+
+		uid, err := database.GetUserID(s.db, username)
+		if err != nil {
+			return fmt.Errorf("%s: could not fetch user record: %w", cmd.name, err)
+		}
+		user := database.User{ID: uid, Username: username}
+		return handler(s, cmd, user)
+	}
+}
+
+func scrapeFeeds(s *state) {
+	ff, err := database.GetNextFeedToFetch(s.db)
+	if err != nil {
+		fmt.Println("scrapeFeeds:", err)
+		return
+	}
+
+	// mark it so we don’t refetch too soon
+	if err := database.MarkFeedFetched(s.db, ff.ID); err != nil {
+		fmt.Println("scrapeFeeds: mark fetched:", err)
+		// continue anyway
+	}
+
+	feed, err := rss.FetchFeed(ff.URL)
+	if err != nil {
+		fmt.Printf("failed to fetch %q: %v\n", ff.URL, err)
+		return
+	}
+	fmt.Printf("=== Feed: %s (%s) ===\n", feed.Channel.Title, ff.URL)
+	for i, item := range feed.Channel.Items {
+		fmt.Printf("[%d] %s\n", i+1, item.Title)
+	}
+	fmt.Println()
 }
 
 func handlerLogin(s *state, cmd command) error {
@@ -107,43 +150,41 @@ func handlerUsers(s *state, _ command) error {
 	return nil
 }
 
-func handlerAgg(s *state, _ command) error {
-	feed, err := rss.FetchFeed("https://www.wagslane.dev/index.xml")
+func handlerAgg(s *state, cmd command) error {
+	if len(cmd.args) != 1 {
+		return fmt.Errorf("%s: usage: agg <interval>", cmd.name)
+	}
+	// parse “1s”, “1m”, “1h”
+	d, err := time.ParseDuration(cmd.args[0])
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: invalid duration %q: %w", cmd.name, cmd.args[0], err)
 	}
-	fmt.Println("Title:", feed.Channel.Title)
-	fmt.Println("Link :", feed.Channel.Link)
-	fmt.Println("Desc :", feed.Channel.Description)
-	fmt.Printf("Items: %d\n", len(feed.Channel.Items))
-	for i, item := range feed.Channel.Items {
-		fmt.Printf("--------Item %d---------\n", i)
-		fmt.Println("Title: ", item.Title)
-		fmt.Println("Description: ", item.Description)
-		fmt.Println("Link: ", item.Link)
-		fmt.Println("PubDate: ", item.PubDate)
+
+	fmt.Printf("Collecting feeds every %s\n", d)
+	scrapeFeeds(s)
+
+	ticker := time.NewTicker(d)
+	for {
+		<-ticker.C
+		scrapeFeeds(s)
 	}
-	return nil
+	// unreachable, signature demands an error return
+	// return nil
 }
 
-func handlerAddFeed(s *state, cmd command) error {
+func handlerAddFeed(s *state, cmd command, user database.User) error {
 	if len(cmd.args) != 2 {
 		return fmt.Errorf("%s: usage: addfeed <name> <url>", cmd.name)
 	}
 	name, url := cmd.args[0], cmd.args[1]
 
-	uid, err := database.GetUserID(s.db, s.cfg.CurrentUser)
-	if err != nil {
-		return fmt.Errorf("addfeed: %w", err)
-	}
-
-	id, err := database.CreateFeed(s.db, name, url, uid)
+	id, err := database.CreateFeed(s.db, name, url, user.ID)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("Feed added : %s → %s\n", name, url)
 
-	ff, err := database.CreateFeedFollow(s.db, uid, id)
+	ff, err := database.CreateFeedFollow(s.db, user.ID, id)
 	if err != nil {
 		return fmt.Errorf("addfeed: failed to auto‑follow: %w", err)
 	}
@@ -168,7 +209,7 @@ func handlerFeeds(s *state, _ command) error {
 	return nil
 }
 
-func handlerFollow(s *state, cmd command) error {
+func handlerFollow(s *state, cmd command, user database.User) error {
 	if len(cmd.args) != 1 {
 		return fmt.Errorf("%s: usage: follow <feed-url>", cmd.name)
 	}
@@ -179,12 +220,7 @@ func handlerFollow(s *state, cmd command) error {
 		return err
 	}
 
-	userID, err := database.GetUserID(s.db, s.cfg.CurrentUser)
-	if err != nil {
-		return err
-	}
-
-	ff, err := database.CreateFeedFollow(s.db, userID, feedID)
+	ff, err := database.CreateFeedFollow(s.db, user.ID, feedID)
 	if err != nil {
 		return err
 	}
@@ -194,12 +230,8 @@ func handlerFollow(s *state, cmd command) error {
 	return nil
 }
 
-func handlerFollowing(s *state, _ command) error {
-	userID, err := database.GetUserID(s.db, s.cfg.CurrentUser)
-	if err != nil {
-		return err
-	}
-	follows, err := database.GetFeedFollowsForUser(s.db, userID)
+func handlerFollowing(s *state, _ command, user database.User) error {
+	follows, err := database.GetFeedFollowsForUser(s.db, user.ID)
 	if err != nil {
 		return err
 	}
@@ -210,6 +242,20 @@ func handlerFollowing(s *state, _ command) error {
 	for _, ff := range follows {
 		fmt.Printf("- %s (%s)\n", ff.FeedName, ff.FeedURL)
 	}
+	return nil
+}
+
+func handlerUnfollow(s *state, cmd command, user database.User) error {
+	if len(cmd.args) != 1 {
+		return fmt.Errorf("%s: usage: unfollow <feed-url>", cmd.name)
+	}
+	feedURL := cmd.args[0]
+
+	if err := database.DeleteFeedFollowByUserAndURL(s.db, user.ID, feedURL); err != nil {
+		return fmt.Errorf("%s: %w", cmd.name, err)
+	}
+
+	fmt.Printf("Unfollowed feed %q for user %s\n", feedURL, user.Username)
 	return nil
 }
 
@@ -244,10 +290,11 @@ func main() {
 	c.register("reset", handlerReset)
 	c.register("users", handlerUsers)
 	c.register("agg", handlerAgg)
-	c.register("addfeed", handlerAddFeed)
+	c.register("addfeed", middlewareLoggedIn(handlerAddFeed))
 	c.register("feeds", handlerFeeds)
-	c.register("follow", handlerFollow)
-	c.register("following", handlerFollowing)
+	c.register("follow", middlewareLoggedIn(handlerFollow))
+	c.register("following", middlewareLoggedIn(handlerFollowing))
+	c.register("unfollow", middlewareLoggedIn(handlerUnfollow))
 	args := os.Args[1:]
 	if len(args) < 1 {
 		fmt.Println("Usage: blogo <some-arg>")

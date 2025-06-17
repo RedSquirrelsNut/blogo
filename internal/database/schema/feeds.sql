@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS feeds (
   id          INTEGER PRIMARY KEY,
   created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_fetched_at  DATETIME NULL,
   name        TEXT    NOT NULL,
   url         TEXT    NOT NULL UNIQUE,
   user_id     INTEGER NOT NULL,

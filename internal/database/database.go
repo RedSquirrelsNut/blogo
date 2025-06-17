@@ -7,6 +7,16 @@ import (
 	"time"
 )
 
+type User struct {
+	ID       int64
+	Username string
+}
+
+type FeedToFetch struct {
+	ID  int64
+	URL string
+}
+
 type FeedFollowInfo struct {
 	ID        int64
 	CreatedAt time.Time
@@ -16,6 +26,36 @@ type FeedFollowInfo struct {
 	UserName  string
 	FeedName  string
 	FeedURL   string
+}
+
+func GetNextFeedToFetch(db *sql.DB) (*FeedToFetch, error) {
+	// NULLS FIRST means feeds never fetched sort before those with timestamps
+	const q = `
+      SELECT id, url
+      FROM feeds
+      ORDER BY last_fetched_at IS NOT NULL, last_fetched_at ASC
+      LIMIT 1;
+    `
+	row := db.QueryRow(q)
+	var f FeedToFetch
+	if err := row.Scan(&f.ID, &f.URL); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no feeds to fetch")
+		}
+		return nil, err
+	}
+	return &f, nil
+}
+
+func MarkFeedFetched(db *sql.DB, feedID int64) error {
+	const q = `
+      UPDATE feeds
+      SET last_fetched_at = CURRENT_TIMESTAMP,
+          updated_at      = CURRENT_TIMESTAMP
+      WHERE id = ?;
+    `
+	_, err := db.Exec(q, feedID)
+	return err
 }
 
 func CreateFeedFollow(db *sql.DB, userID, feedID int64) (*FeedFollowInfo, error) {
@@ -51,6 +91,36 @@ func CreateFeedFollow(db *sql.DB, userID, feedID int64) (*FeedFollowInfo, error)
 		return nil, fmt.Errorf("fetch created feed_follow: %w", err)
 	}
 	return &ff, nil
+}
+
+func DeleteFeedFollowByUserAndURL(db *sql.DB, userID int64, feedURL string) error {
+	var feedID int64
+	err := db.QueryRow(
+		`SELECT id FROM feeds WHERE url = ?;`,
+		feedURL,
+	).Scan(&feedID)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("feed %q not found", feedURL)
+	}
+	if err != nil {
+		return fmt.Errorf("lookup feed ID: %w", err)
+	}
+
+	res, err := db.Exec(
+		`DELETE FROM feed_follows WHERE user_id = ? AND feed_id = ?;`,
+		userID, feedID,
+	)
+	if err != nil {
+		return fmt.Errorf("delete follow: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check delete count: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("no follow found for user %d on feed %q", userID, feedURL)
+	}
+	return nil
 }
 
 func GetFeedByURL(db *sql.DB, url string) (id int64, name string, err error) {
@@ -274,12 +344,10 @@ func RegisterUser(db *sql.DB, username string) error {
 }
 
 func DropAllTables(db *sql.DB) error {
-	// 1) Disable FK checks so we can drop in any order
 	if _, err := db.Exec(`PRAGMA foreign_keys = OFF;`); err != nil {
 		return err
 	}
 
-	// 2) Query all user tables
 	rows, err := db.Query(`
         SELECT name
         FROM sqlite_master
@@ -290,7 +358,6 @@ func DropAllTables(db *sql.DB) error {
 		return err
 	}
 
-	// 3) Collect names
 	var tables []string
 	for rows.Next() {
 		var tbl string
@@ -305,14 +372,12 @@ func DropAllTables(db *sql.DB) error {
 		return err
 	}
 
-	// 4) Drop each table now that rows is closed
 	for _, tbl := range tables {
 		if _, err := db.Exec(fmt.Sprintf(`DROP TABLE IF EXISTS "%s";`, tbl)); err != nil {
 			return err
 		}
 	}
 
-	// 5) Re‑enable FK checks
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		return err
 	}
