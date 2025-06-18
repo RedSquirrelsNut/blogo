@@ -60,3 +60,7 @@ go build -o blogo
 
 All exported functions and types are documented with GoDoc comments.  
 See code for further inline explanations.
+
+## Future Plans
+
+Bubbletea TUI
