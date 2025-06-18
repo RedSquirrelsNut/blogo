@@ -8,6 +8,7 @@ import (
 //go:embed users.sql
 //go:embed feeds.sql
 //go:embed feed_follows.sql
+//go:embed posts.sql
 var ddlFiles embed.FS
 
 func LoadSchema(name string) (string, error) {

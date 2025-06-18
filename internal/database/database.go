@@ -5,11 +5,95 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/mattn/go-sqlite3"
 )
 
 type User struct {
 	ID       int64
 	Username string
+}
+
+type Post struct {
+	ID          int64
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	Title       string
+	URL         string
+	Description sql.NullString
+	PublishedAt sql.NullTime
+	FeedID      int64
+}
+
+// CreatePost inserts a new post record.
+// Returns ErrConstraint if the URL already exists.
+func CreatePost(db *sql.DB, p *Post) error {
+	const q = `
+      INSERT INTO posts (title, url, description, published_at, feed_id)
+      VALUES (?, ?, ?, ?, ?);
+    `
+	if _, err := db.Exec(q,
+		p.Title,
+		p.URL,
+		p.Description,
+		p.PublishedAt,
+		p.FeedID,
+	); err != nil {
+		// if it's a sqlite3 unique‑constraint on posts.url, ignore it:
+		if sqlErr, ok := err.(sqlite3.Error); ok {
+			if sqlErr.ExtendedCode == sqlite3.ErrConstraintUnique {
+				return nil
+			}
+		}
+		return fmt.Errorf("create post: %w", err)
+	}
+	return nil
+}
+
+// GetPostsForUser returns the most-recent N posts from all feeds the user follows.
+func GetPostsForUser(db *sql.DB, userID int64, limit int) ([]Post, error) {
+	const q = `
+      SELECT p.id, p.created_at, p.updated_at,
+             p.title, p.url, p.description, p.published_at, p.feed_id
+      FROM posts AS p
+      JOIN feed_follows AS ff ON ff.feed_id = p.feed_id
+      WHERE ff.user_id = ?
+      ORDER BY p.published_at DESC
+      LIMIT ?;
+    `
+	rows, err := db.Query(q, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Post
+	for rows.Next() {
+		var p Post
+		if err := rows.Scan(
+			&p.ID, &p.CreatedAt, &p.UpdatedAt,
+			&p.Title, &p.URL, &p.Description, &p.PublishedAt, &p.FeedID,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func CreatePostsTable(db *sql.DB) error {
+	schema, err := schema.LoadSchema("posts")
+	if err != nil {
+		return err
+	}
+
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+	return nil
 }
 
 type FeedToFetch struct {
@@ -26,6 +110,28 @@ type FeedFollowInfo struct {
 	UserName  string
 	FeedName  string
 	FeedURL   string
+}
+
+func GetAllFeeds(db *sql.DB) ([]FeedToFetch, error) {
+	const q = `SELECT id, url FROM feeds ORDER BY id;`
+	rows, err := db.Query(q)
+	if err != nil {
+		return nil, fmt.Errorf("get all feeds: %w", err)
+	}
+	defer rows.Close()
+
+	var out []FeedToFetch
+	for rows.Next() {
+		var f FeedToFetch
+		if err := rows.Scan(&f.ID, &f.URL); err != nil {
+			return nil, fmt.Errorf("scan feed row: %w", err)
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate feeds: %w", err)
+	}
+	return out, nil
 }
 
 func GetNextFeedToFetch(db *sql.DB) (*FeedToFetch, error) {

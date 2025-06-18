@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -59,30 +60,78 @@ func middlewareLoggedIn(handler func(s *state, cmd command, user database.User) 
 		return handler(s, cmd, user)
 	}
 }
+func truncate(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "…"
+}
+
+var rssDateLayouts = []string{
+	time.RFC1123Z,               // “Mon, 02 Jan 2006 15:04:05 -0700”
+	time.RFC1123,                // “Mon, 02 Jan 2006 15:04:05 MST”
+	time.RFC822Z,                // “02 Jan 06 15:04 -0700”
+	time.RFC822,                 // “02 Jan 06 15:04 MST”
+	time.RFC850,                 // “Monday, 02-Jan-06 15:04:05 MST”
+	time.RFC3339,                // “2006-01-02T15:04:05Z07:00”
+	"2006-01-02 15:04:05 -0700", // some feeds use a space‑separated variant
+	time.ANSIC,                  // “Mon Jan _2 15:04:05 2006”
+}
+
+// parsePubDate attempts each known layout until one succeeds.
+func parsePubDate(raw string) (time.Time, error) {
+	var lastErr error
+	for _, layout := range rssDateLayouts {
+		t, err := time.Parse(layout, raw)
+		if err == nil {
+			return t, nil
+		}
+		lastErr = err
+	}
+	return time.Time{}, fmt.Errorf("unrecognized date format %q: %v", raw, lastErr)
+}
 
 func scrapeFeeds(s *state) {
-	ff, err := database.GetNextFeedToFetch(s.db)
+	// fetch the full list of feeds up front
+	feeds, err := database.GetAllFeeds(s.db) // you’ll write this in a moment
 	if err != nil {
-		fmt.Println("scrapeFeeds:", err)
+		fmt.Println("scrapeFeeds: could not list feeds:", err)
 		return
 	}
 
-	// mark it so we don’t refetch too soon
-	if err := database.MarkFeedFetched(s.db, ff.ID); err != nil {
-		fmt.Println("scrapeFeeds: mark fetched:", err)
-		// continue anyway
-	}
+	for _, ff := range feeds {
+		// mark it so we won’t refetch too soon
+		if err := database.MarkFeedFetched(s.db, ff.ID); err != nil {
+			fmt.Println("scrapeFeeds: mark fetched:", err)
+			// continue on to the fetch even if marking fails
+		}
 
-	feed, err := rss.FetchFeed(ff.URL)
-	if err != nil {
-		fmt.Printf("failed to fetch %q: %v\n", ff.URL, err)
-		return
+		// fetch & print
+		feed, err := rss.FetchFeed(ff.URL)
+		if err != nil {
+			fmt.Printf("failed to fetch %q: %v\n", ff.URL, err)
+			continue
+		}
+		fmt.Printf("=== Feed: %s (%s) ===\n", feed.Channel.Title, ff.URL)
+		for _, item := range feed.Channel.Items {
+			pub, err := parsePubDate(item.PubDate)
+			if err != nil {
+				fmt.Printf("warning: could not parse date %q: %v\n", item.PubDate, err)
+			}
+			post := &database.Post{
+				Title:       item.Title,
+				URL:         item.Link,
+				Description: sql.NullString{String: item.Description, Valid: item.Description != ""},
+				PublishedAt: sql.NullTime{Time: pub, Valid: !pub.IsZero()},
+				FeedID:      ff.ID,
+			}
+			if err := database.CreatePost(s.db, post); err != nil {
+				fmt.Printf("error saving post %q: %v\n", post.URL, err)
+			}
+		}
+		fmt.Println()
 	}
-	fmt.Printf("=== Feed: %s (%s) ===\n", feed.Channel.Title, ff.URL)
-	for i, item := range feed.Channel.Items {
-		fmt.Printf("[%d] %s\n", i+1, item.Title)
-	}
-	fmt.Println()
 }
 
 func handlerLogin(s *state, cmd command) error {
@@ -130,6 +179,9 @@ func handlerReset(s *state, _ command) error {
 	if err := database.CreateFeedFollowsTable(s.db); err != nil {
 		return err
 	}
+	if err := database.CreatePostsTable(s.db); err != nil {
+		return err
+	}
 
 	fmt.Println("Database has been reset to blank state.")
 	return nil
@@ -170,6 +222,38 @@ func handlerAgg(s *state, cmd command) error {
 	}
 	// unreachable, signature demands an error return
 	// return nil
+}
+
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	// default limit = 2
+	limit := 2
+	if len(cmd.args) == 1 {
+		if l, err := strconv.Atoi(cmd.args[0]); err == nil && l > 0 {
+			limit = l
+		} else {
+			return fmt.Errorf("%s: invalid limit %q", cmd.name, cmd.args[0])
+		}
+	} else if len(cmd.args) > 1 {
+		return fmt.Errorf("%s: usage: browse [limit]", cmd.name)
+	}
+
+	posts, err := database.GetPostsForUser(s.db, user.ID, limit)
+	if err != nil {
+		return err
+	}
+	if len(posts) == 0 {
+		fmt.Println("No posts available.")
+		return nil
+	}
+	for i, p := range posts {
+		fmt.Printf("===========================Post %d============================\n", i+1)
+		fmt.Printf("• %s (%s)\n  published: %s\n  %s\n\n",
+			p.Title, p.URL,
+			p.PublishedAt.Time.Format(time.RFC1123),
+			truncate(p.Description.String, 100),
+		)
+	}
+	return nil
 }
 
 func handlerAddFeed(s *state, cmd command, user database.User) error {
@@ -282,6 +366,9 @@ func main() {
 	if err := database.CreateFeedFollowsTable(db); err != nil {
 		log.Fatal(err)
 	}
+	if err := database.CreatePostsTable(db); err != nil {
+		log.Fatal(err)
+	}
 
 	s := state{cfg: cfg, db: db}
 	c := commands{list: make(commandMap)}
@@ -290,6 +377,7 @@ func main() {
 	c.register("reset", handlerReset)
 	c.register("users", handlerUsers)
 	c.register("agg", handlerAgg)
+	c.register("browse", middlewareLoggedIn(handlerBrowse))
 	c.register("addfeed", middlewareLoggedIn(handlerAddFeed))
 	c.register("feeds", handlerFeeds)
 	c.register("follow", middlewareLoggedIn(handlerFollow))
