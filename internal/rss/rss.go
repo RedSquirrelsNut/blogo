@@ -1,11 +1,10 @@
 package rss
 
 import (
+	"blogo/internal/utils"
 	"encoding/xml"
-	"html"
 	"io"
 	"net/http"
-	"regexp"
 )
 
 type RSSFeed struct {
@@ -25,14 +24,6 @@ type RSSItem struct {
 	Link        string `xml:"link"`
 	Description string `xml:"description"`
 	PubDate     string `xml:"pubDate"`
-}
-
-var tagRe = regexp.MustCompile(`(?s)<[^>]*>`)
-
-// stripHTML removes everything that looks like an HTML tag.
-func stripHTML(raw string) string {
-	withoutTags := tagRe.ReplaceAllString(raw, "")
-	return html.UnescapeString(withoutTags)
 }
 
 func FetchFeed(feedURL string) (*RSSFeed, error) {
@@ -60,12 +51,12 @@ func FetchFeed(feedURL string) (*RSSFeed, error) {
 		return nil, unmarshalErr
 	}
 
-	feed.Channel.Title = stripHTML(feed.Channel.Title)
-	feed.Channel.Description = stripHTML(feed.Channel.Description)
+	feed.Channel.Title = utils.StripHTML(feed.Channel.Title)
+	feed.Channel.Description = utils.StripHTML(feed.Channel.Description)
 
 	for i := range feed.Channel.Items {
-		feed.Channel.Items[i].Title = stripHTML(feed.Channel.Items[i].Title)
-		feed.Channel.Items[i].Description = stripHTML(feed.Channel.Items[i].Description)
+		feed.Channel.Items[i].Title = utils.StripHTML(feed.Channel.Items[i].Title)
+		feed.Channel.Items[i].Description = utils.StripHTML(feed.Channel.Items[i].Description)
 	}
 
 	return feed, nil
