@@ -5,7 +5,6 @@ CREATE TABLE IF NOT EXISTS users (
   name 			 TEXT NOT NULL
 );
 
--- keep updated_at in sync on every UPDATE
 CREATE TRIGGER IF NOT EXISTS users_updated_at
 AFTER UPDATE ON users
 FOR EACH ROW

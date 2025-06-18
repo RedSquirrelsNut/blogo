@@ -7,15 +7,15 @@ import (
 
 // FeedToFetch represents a minimal feed for fetching operations.
 type FeedToFetch struct {
-	ID  int64  // Feed database ID
-	URL string // Feed URL
+	ID  int64
+	URL string
 }
 
 // FeedInfo contains feed listing information, including owner username.
 type FeedInfo struct {
-	Name     string // Feed name/title
-	URL      string // Feed URL
-	Username string // Username of the user who added the feed
+	Name     string
+	URL      string
+	Username string
 }
 
 // CreateFeed inserts a new feed with the given name, URL, and owner user ID.

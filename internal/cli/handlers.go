@@ -11,21 +11,18 @@ import (
 )
 
 func scrapeFeeds(s *State) {
-	// fetch the full list of feeds up front
-	feeds, err := database.GetAllFeeds(s.DB) // you’ll write this in a moment
+	feeds, err := database.GetAllFeeds(s.DB)
 	if err != nil {
 		fmt.Println("scrapeFeeds: could not list feeds:", err)
 		return
 	}
 
 	for _, ff := range feeds {
-		// mark it so we won’t refetch too soon
 		if err := database.MarkFeedFetched(s.DB, ff.ID); err != nil {
 			fmt.Println("scrapeFeeds: mark fetched:", err)
 			// continue on to the fetch even if marking fails
 		}
 
-		// fetch & print
 		feed, err := rss.FetchFeed(ff.URL)
 		if err != nil {
 			fmt.Printf("failed to fetch %q: %v\n", ff.URL, err)
@@ -138,8 +135,6 @@ func HandlerAgg(s *State, cmd Command) error {
 		<-ticker.C
 		scrapeFeeds(s)
 	}
-	// unreachable, signature demands an error return
-	// return nil
 }
 
 func HandlerBrowse(s *State, cmd Command, user database.User) error {
