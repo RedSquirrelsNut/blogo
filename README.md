@@ -18,7 +18,7 @@ Supports user registration, following feeds, fetching posts, and browsing.
 - `internal/utils/` - Utility functions (e.g. date parsing, string truncation)
 - `internal/rss/` - RSS-specific helpers, HTML cleanup
 
-## Testing
+## Testing (WIP)
 
 All core logic is tested using in-memory SQLite. Run all tests:
 
@@ -37,7 +37,7 @@ go build -o blogo
 ./blogo browse
 ```
 
-## Documentation
+## Documentation (WIP)
 
 All exported functions and types are documented with GoDoc comments.  
 See code for further inline explanations.
