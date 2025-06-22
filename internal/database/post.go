@@ -23,7 +23,7 @@ type Post struct {
 // Returns an error if the insert fails.
 func CreatePost(db *sql.DB, p *Post) error {
 	_, err := db.Exec(
-		`INSERT INTO posts (title, url, description, published_at, feed_id) VALUES (?, ?, ?, ?, ?);`,
+		`INSERT INTO posts (title, url, description, published_at, feed_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT(url) DO NOTHING;`,
 		p.Title, p.URL, p.Description, p.PublishedAt, p.FeedID,
 	)
 	if err != nil {
