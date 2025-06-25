@@ -21,13 +21,6 @@ Made to learn Go/Sqlite.
 - `internal/database/` - Schema/Database logic, split by concern: users, feeds, posts, feed follows
 - `internal/utils/` - Utility functions (e.g. date parsing, string truncation, RSS-specific helpers, HTML cleanup)
 
-## Testing (WIP)
-
-All core logic is tested using in-memory SQLite. Run all tests:
-
-```sh
-go test ./internal/...
-```
 
 ## Usage
 
@@ -54,9 +47,3 @@ go build -o blogo
 - `unfollow *url*` - Unfollows a feed
 - `following` - Lists all feeds followed by current user
 - `browse *?num*` - Displays most recent posts (last 2 with no arg)
-
-
-## Documentation (WIP)
-
-All exported functions and types are documented with GoDoc comments.  
-See code for further inline explanations.
